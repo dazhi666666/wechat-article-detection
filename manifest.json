@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "公众号文章监测助手",
+  "version": "3.0",
+  "description": "监测多个公众号的近期文章，支持自定义分类、左右布局、批量下载",
+  "permissions": [
+    "cookies",
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "*://*.weixin.qq.com/*",
+    "*://*.qq.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["*://mp.weixin.qq.com/s*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png"
+    }
+  }
+}

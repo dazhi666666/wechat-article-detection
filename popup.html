@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>公众号文章监测助手</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    width: 780px;
+    height: 540px;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 13px;
+    color: #1d1d1f;
+    background: #f0f0f5;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── Header ── */
+  .header {
+    background: #07C160;
+    color: #fff;
+    padding: 10px 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+    z-index: 10;
+  }
+  .header h1 { font-size: 14px; font-weight: 600; letter-spacing: 0.02em; }
+  .header .badge {
+    background: rgba(255,255,255,0.25);
+    padding: 1px 8px;
+    border-radius: 20px;
+    font-size: 11px;
+  }
+  .header-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+  .about-btn {
+    background: rgba(255,255,255,0.2); border: none; cursor: pointer;
+    font-size: 14px; border-radius: 50%; width: 24px; height: 24px;
+    display: flex; align-items: center; justify-content: center;
+    transition: background 0.15s;
+  }
+  .about-btn:hover { background: rgba(255,255,255,0.35); }
+
+  /* ── Top Config Bar ── */
+  .config-bar {
+    background: #fff;
+    border-bottom: 1px solid #e0e0e5;
+    padding: 8px 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+  .config-bar label { font-size: 11px; color: #6e6e73; flex-shrink: 0; }
+  .config-bar input[type="text"] {
+    width: 180px;
+    flex-shrink: 0;
+    border: 1px solid #d2d2d7;
+    border-radius: 5px;
+    padding: 5px 8px;
+    font-size: 12px;
+    outline: none;
+    background: #f5f5f7;
+  }
+  .config-bar input[type="text"]:focus { border-color: #07C160; background: #fff; }
+  .sep-v { width: 1px; height: 18px; background: #e0e0e5; flex-shrink: 0; }
+
+  /* ── Cookie Status ── */
+  #cookie-status {
+    display: flex; align-items: center; gap: 4px;
+    font-size: 11px; color: #86868b; flex-shrink: 0;
+  }
+  .dot { width: 6px; height: 6px; border-radius: 50%; background: #ccc; flex-shrink: 0; }
+  .dot.ok { background: #07C160; }
+  .dot.err { background: #e5484d; }
+
+  /* ── Time Seg + Run ── */
+  .seg-ctrl {
+    display: flex;
+    border: 1px solid #d2d2d7;
+    border-radius: 5px;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+  .seg-ctrl button {
+    padding: 4px 10px;
+    border: none;
+    background: #fff;
+    cursor: pointer;
+    font-size: 11px;
+    color: #3c3c43;
+    border-right: 1px solid #d2d2d7;
+    transition: background 0.1s;
+  }
+  .seg-ctrl button:last-child { border-right: none; }
+  .seg-ctrl button.active { background: #07C160; color: #fff; }
+
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    gap: 4px; border: none; border-radius: 5px; cursor: pointer;
+    font-size: 12px; font-family: inherit;
+    transition: background 0.15s, opacity 0.15s;
+  }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-primary { background: #07C160; color: #fff; padding: 5px 14px; }
+  .btn-primary:hover:not(:disabled) { background: #06ae56; }
+  .btn-sm { background: #f0f0f5; color: #3c3c43; padding: 4px 10px; font-size: 11px; }
+  .btn-sm:hover:not(:disabled) { background: #e5e5ea; }
+  .btn-ghost {
+    background: none; border: 1px solid #d2d2d7;
+    color: #3c3c43; padding: 4px 10px; font-size: 11px;
+  }
+  .btn-ghost:hover:not(:disabled) { background: #f5f5f7; }
+
+  /* ── Progress ── */
+  #progress-wrap {
+    background: #fff;
+    border-bottom: 1px solid #e0e0e5;
+    padding: 6px 14px;
+    display: none;
+    flex-shrink: 0;
+  }
+  .progress-bar-bg { height: 3px; background: #e5e5ea; border-radius: 2px; overflow: hidden; }
+  .progress-bar { height: 3px; background: #07C160; border-radius: 2px; width: 0%; transition: width 0.3s; }
+  #progress-text { font-size: 11px; color: #6e6e73; margin-top: 4px; }
+
+  /* ── Main Body (Left + Right) ── */
+  .main-body {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* ── LEFT SIDEBAR ── */
+  .sidebar {
+    width: 160px;
+    flex-shrink: 0;
+    background: #fff;
+    border-right: 1px solid #e0e0e5;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .sidebar-header {
+    padding: 8px 10px 6px;
+    border-bottom: 1px solid #f0f0f0;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+  .sidebar-header span { font-size: 11px; font-weight: 600; color: #6e6e73; text-transform: uppercase; letter-spacing: 0.05em; flex: 1; }
+  .sidebar-add-btn {
+    width: 20px; height: 20px;
+    border: none; background: none;
+    cursor: pointer; font-size: 16px; color: #07C160;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 4px;
+    line-height: 1;
+  }
+  .sidebar-add-btn:hover { background: #e8f9ee; }
+
+  .sidebar-scroll { flex: 1; overflow-y: auto; }
+  .sidebar-scroll::-webkit-scrollbar { width: 4px; }
+  .sidebar-scroll::-webkit-scrollbar-thumb { background: #d2d2d7; border-radius: 2px; }
+
+  /* 全部 条目 */
+  .sidebar-all {
+    padding: 7px 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    border-bottom: 1px solid #f5f5f7;
+    transition: background 0.1s;
+  }
+  .sidebar-all:hover { background: #f5f5f7; }
+  .sidebar-all.active { background: #e8f9ee; }
+  .sidebar-all .all-label { font-size: 12px; font-weight: 500; flex: 1; }
+  .sidebar-all .all-count { font-size: 10px; background: #07C160; color: #fff; border-radius: 20px; padding: 0 6px; }
+
+  /* 分类块 */
+  .cat-block { border-bottom: 1px solid #f5f5f7; }
+  .cat-header {
+    padding: 6px 10px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.1s;
+  }
+  .cat-header:hover { background: #f5f5f7; }
+  .cat-arrow { font-size: 9px; color: #86868b; transition: transform 0.2s; flex-shrink: 0; }
+  .cat-header.collapsed .cat-arrow { transform: rotate(-90deg); }
+  .cat-name { font-size: 12px; font-weight: 600; color: #3c3c43; flex: 1; }
+  .cat-total { font-size: 10px; color: #86868b; flex-shrink: 0; }
+  .cat-menu-btn {
+    width: 18px; height: 18px;
+    border: none; background: none; cursor: pointer;
+    font-size: 13px; color: #86868b;
+    display: none; align-items: center; justify-content: center;
+    border-radius: 3px;
+  }
+  .cat-header:hover .cat-menu-btn { display: flex; }
+  .cat-menu-btn:hover { background: #e5e5ea; color: #3c3c43; }
+
+  /* 公众号条目 */
+  .acc-item {
+    padding: 5px 10px 5px 20px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+  .acc-item:hover { background: #f5f5f7; }
+  .acc-item.active { background: #e8f9ee; }
+  .acc-item .acc-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: #d2d2d7; flex-shrink: 0;
+  }
+  .acc-item.has-articles .acc-dot { background: #07C160; }
+  .acc-item .acc-name { font-size: 12px; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .acc-item .acc-count { font-size: 10px; color: #86868b; flex-shrink: 0; }
+  .acc-item.has-articles .acc-count { color: #07C160; font-weight: 500; }
+
+  /* 未分类 */
+  .cat-block.uncategorized .cat-name { color: #86868b; font-style: italic; font-weight: 400; }
+
+  /* ── RIGHT PANEL ── */
+  .right-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: #f0f0f5;
+  }
+
+  /* 右侧顶栏 */
+  .right-header {
+    background: #fafafa;
+    border-bottom: 1px solid #e0e0e5;
+    padding: 7px 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+    min-height: 38px;
+  }
+  .right-title { font-size: 13px; font-weight: 600; flex: 1; }
+  .right-meta { font-size: 11px; color: #86868b; }
+
+  /* 操作栏 */
+  #action-bar {
+    background: #fff;
+    border-bottom: 1px solid #e0e0e5;
+    padding: 5px 12px;
+    display: none;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    font-size: 12px;
+  }
+  #action-bar .sel-count { font-weight: 600; color: #07C160; }
+  .toggle-btn {
+    background: #f0f0f5; color: #3c3c43;
+    border: none; border-radius: 5px; cursor: pointer;
+    font-size: 11px; padding: 3px 8px; font-family: inherit;
+  }
+  .toggle-btn:hover { background: #e5e5ea; }
+  .dl-btn {
+    background: #07C160; color: #fff;
+    border: none; border-radius: 5px; cursor: pointer;
+    font-size: 11px; padding: 4px 10px; font-family: inherit;
+    display: inline-flex; align-items: center; gap: 3px;
+  }
+  .dl-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .dl-btn:not(:disabled):hover { background: #06ae56; }
+  #action-bar .ml-auto { margin-left: auto; display: flex; gap: 4px; }
+
+  /* 文章列表滚动区 */
+  .articles-scroll {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 8px;
+  }
+  .articles-scroll::-webkit-scrollbar { width: 4px; }
+  .articles-scroll::-webkit-scrollbar-thumb { background: #d2d2d7; border-radius: 2px; }
+
+  /* 账号分组标题（全部模式下显示） */
+  .acc-group-title {
+    padding: 4px 6px 2px;
+    font-size: 11px; font-weight: 600; color: #86868b;
+    text-transform: uppercase; letter-spacing: 0.04em;
+    margin-top: 4px;
+  }
+
+  /* 文章卡片 — 紧凑单行 */
+  .article-item {
+    background: #fff;
+    border-radius: 5px;
+    padding: 5px 8px;
+    margin-bottom: 3px;
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    border: 1px solid transparent;
+    transition: border-color 0.1s;
+    min-height: 0;
+  }
+  .article-item:hover { border-color: #d2d2d7; }
+  .col-check { flex-shrink: 0; }
+  .col-check input[type="checkbox"] { width: 13px; height: 13px; cursor: pointer; accent-color: #07C160; }
+  .art-idx { color: #c7c7cc; font-size: 10px; min-width: 14px; flex-shrink: 0; }
+  .art-body {
+    flex: 1; min-width: 0;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .art-title {
+    flex: 1; min-width: 0;
+    color: #07C160; text-decoration: none;
+    font-size: 12px; line-height: 1.3;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .art-title:hover { text-decoration: underline; }
+  .art-meta { font-size: 10px; color: #86868b; flex-shrink: 0; white-space: nowrap; }
+  .art-acc-tag {
+    font-size: 10px; background: #f0f0f5; color: #86868b;
+    border-radius: 3px; padding: 1px 4px; margin-left: 3px; flex-shrink: 0;
+  }
+  .art-actions { flex-shrink: 0; }
+  .art-btn-dl {
+    background: #07C160; color: #fff;
+    border: none; border-radius: 4px; cursor: pointer;
+    font-size: 11px; padding: 3px 8px; font-family: inherit;
+    white-space: nowrap;
+  }
+  .art-btn-dl:disabled { opacity: 0.4; cursor: not-allowed; }
+  .art-btn-dl:not(:disabled):hover { background: #06ae56; }
+
+  .art-empty {
+    text-align: center; color: #86868b; font-size: 13px;
+    padding: 40px 20px;
+  }
+  .art-empty .hint { font-size: 11px; color: #c7c7cc; margin-top: 6px; }
+
+  /* 错误条目 */
+  .err-item {
+    background: #fff5f5; border: 1px solid #ffd5d5;
+    border-radius: 7px; padding: 8px 12px;
+    font-size: 12px; color: #c53030; margin-bottom: 5px;
+  }
+
+  /* ── Toast ── */
+  #toast {
+    position: fixed; bottom: 14px; left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    background: rgba(29,29,31,0.85); color: #fff;
+    padding: 6px 16px; border-radius: 20px; font-size: 12px;
+    opacity: 0; transition: opacity 0.2s, transform 0.2s;
+    pointer-events: none; white-space: nowrap; z-index: 999;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* ── Modals ── */
+  .modal-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.3); z-index: 100;
+    align-items: center; justify-content: center;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    background: #fff; border-radius: 12px;
+    padding: 18px 20px; width: 300px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+  }
+  .modal h3 { font-size: 14px; margin-bottom: 12px; }
+  .modal input[type="text"] {
+    width: 100%; border: 1px solid #d2d2d7; border-radius: 6px;
+    padding: 7px 10px; font-size: 13px; outline: none; margin-bottom: 10px;
+  }
+  .modal input:focus { border-color: #07C160; }
+  .modal-footer { display: flex; gap: 8px; justify-content: flex-end; }
+  .modal select {
+    width: 100%; border: 1px solid #d2d2d7; border-radius: 6px;
+    padding: 7px 10px; font-size: 13px; outline: none;
+    margin-bottom: 10px; background: #fff;
+  }
+  .modal label.field-label { font-size: 11px; color: #6e6e73; display: block; margin-bottom: 4px; }
+
+  /* 右键菜单 */
+  .ctx-menu {
+    display: none; position: fixed; z-index: 200;
+    background: #fff; border: 1px solid #d2d2d7;
+    border-radius: 8px; padding: 4px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.14);
+    min-width: 130px;
+  }
+  .ctx-menu.open { display: block; }
+  .ctx-item {
+    padding: 6px 12px; font-size: 12px; cursor: pointer;
+    border-radius: 4px; color: #3c3c43;
+  }
+  .ctx-item:hover { background: #f5f5f7; }
+  .ctx-item.danger { color: #e5484d; }
+  .ctx-item.danger:hover { background: #fff5f5; }
+  .ctx-divider { height: 1px; background: #f0f0f0; margin: 3px 0; }
+
+  /* 关于弹窗 */
+  .about-modal .modal { width: 320px; text-align: center; }
+  .about-logo { font-size: 36px; margin-bottom: 8px; }
+  .about-name { font-size: 16px; font-weight: 700; color: #1d1d1f; margin-bottom: 4px; }
+  .about-ver { font-size: 11px; color: #86868b; margin-bottom: 16px; }
+  .about-info { text-align: left; font-size: 12px; line-height: 1.8; color: #3c3c43; margin-bottom: 14px; }
+  .about-info span { color: #86868b; }
+  .about-copyright { font-size: 11px; color: #e5484d; background: #fff5f5; border-radius: 6px; padding: 8px 10px; line-height: 1.6; margin-bottom: 14px; }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <span>📡</span>
+  <h1>公众号文章监测助手</h1>
+  <span class="badge">v3.0</span>
+  <div class="header-right">
+    <span id="cookie-status">
+      <span class="dot" id="cookie-dot"></span>
+      <span id="cookie-text">检测中...</span>
+    </span>
+    <button class="about-btn" id="about-btn" title="关于">ℹ️</button>
+  </div>
+</div>
+
+<!-- Config Bar -->
+<div class="config-bar">
+  <label>Token</label>
+  <input type="text" id="token" placeholder="自动读取，或手动粘贴">
+  <div class="sep-v"></div>
+  <label>时间范围</label>
+  <div class="seg-ctrl" id="time-seg">
+    <button data-days="1" class="active">24h</button>
+    <button data-days="3">3天</button>
+    <button data-days="7">7天</button>
+    <button data-days="30">30天</button>
+  </div>
+  <button class="btn btn-primary" id="run-btn">▶ 开始监测</button>
+  <button class="btn btn-sm" id="export-md-btn">导出 MD</button>
+</div>
+
+<!-- Progress -->
+<div id="progress-wrap">
+  <div class="progress-bar-bg"><div class="progress-bar" id="progress-bar"></div></div>
+  <div id="progress-text">准备中...</div>
+</div>
+
+<!-- Main Body -->
+<div class="main-body">
+
+  <!-- LEFT SIDEBAR -->
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <span>分类 &amp; 公众号</span>
+      <button class="sidebar-add-btn" id="add-cat-btn" title="新建分类">＋</button>
+    </div>
+    <div class="sidebar-scroll" id="sidebar-scroll">
+      <!-- 全部 -->
+      <div class="sidebar-all active" id="nav-all">
+        <span class="all-label">📋 全部</span>
+        <span class="all-count" id="nav-all-count">0</span>
+      </div>
+      <!-- 分类动态渲染 -->
+      <div id="cat-list"></div>
+    </div>
+  </div>
+
+  <!-- RIGHT PANEL -->
+  <div class="right-panel">
+    <div class="right-header">
+      <span class="right-title" id="right-title">全部文章</span>
+      <span class="right-meta" id="right-meta"></span>
+      <button class="btn btn-ghost" id="manage-accounts-btn" style="margin-left:8px;">⚙ 管理公众号</button>
+    </div>
+
+    <!-- 操作栏 -->
+    <div id="action-bar">
+      <span>已选</span>
+      <span class="sel-count" id="sel-count">0</span>
+      <span>篇</span>
+      <button class="dl-btn" id="dl-selected-btn" disabled>💾 批量下载</button>
+      <div class="ml-auto">
+        <button class="toggle-btn" id="select-all-btn">全选</button>
+        <button class="toggle-btn" id="clear-sel-btn">清空</button>
+      </div>
+    </div>
+
+    <!-- 文章列表 -->
+    <div class="articles-scroll" id="articles-panel">
+      <div class="art-empty">
+        <div>点击左侧公众号查看文章</div>
+        <div class="hint">先点击「开始监测」获取最新文章</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="toast"></div>
+
+<!-- ── 新建/重命名分类 Modal ── -->
+<div class="modal-overlay" id="modal-cat">
+  <div class="modal">
+    <h3 id="modal-cat-title">新建分类</h3>
+    <label class="field-label">分类名称</label>
+    <input type="text" id="modal-cat-name" placeholder="如：量化交易、财经资讯…">
+    <div class="modal-footer">
+      <button class="btn btn-sm" id="modal-cat-cancel">取消</button>
+      <button class="btn btn-primary" id="modal-cat-ok">确认</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── 管理公众号 Modal ── -->
+<div class="modal-overlay" id="modal-accounts">
+  <div class="modal" style="width:300px;">
+    <h3>添加公众号</h3>
+    <label class="field-label">公众号名称</label>
+    <input type="text" id="new-acc-name" placeholder="输入公众号名称">
+    <label class="field-label">所属分类</label>
+    <select id="new-acc-cat"></select>
+    <button class="btn btn-primary" id="add-acc-confirm" style="width:100%;margin-top:6px;">添加</button>
+    <p style="font-size:10px;color:#86868b;margin-top:8px;text-align:center;">💡 右键左侧公众号可删除或移动分类</p>
+    <div class="modal-footer" style="margin-top:8px;justify-content:space-between;">
+      <button class="btn" id="clear-all-data-btn" style="background:#fff;border:1px solid #e5484d;color:#e5484d;padding:4px 10px;font-size:11px;">🗑 清除所有数据</button>
+      <button class="btn btn-sm" id="modal-accounts-close">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── 右键菜单（分类） ── -->
+<div class="ctx-menu" id="ctx-menu">
+  <div class="ctx-item" id="ctx-rename">重命名分类</div>
+  <div class="ctx-item" id="ctx-add-acc">添加公众号到此分类</div>
+  <div class="ctx-divider"></div>
+  <div class="ctx-item danger" id="ctx-delete">删除分类</div>
+</div>
+
+<!-- ── 右键菜单（公众号） ── -->
+<div class="ctx-menu" id="ctx-acc-menu">
+  <div class="ctx-item" id="ctx-acc-move">移动到分类…</div>
+  <div class="ctx-divider"></div>
+  <div class="ctx-item danger" id="ctx-acc-delete">删除公众号</div>
+</div>
+
+<!-- ── 移动公众号到分类 Modal ── -->
+<div class="modal-overlay" id="modal-move-acc">
+  <div class="modal" style="width:280px;">
+    <h3>移动到分类</h3>
+    <p id="move-acc-name" style="font-size:12px;color:#6e6e73;margin-bottom:10px;"></p>
+    <select id="move-acc-cat-sel" style="width:100%;border:1px solid #d2d2d7;border-radius:5px;padding:6px 8px;font-size:12px;"></select>
+    <div class="modal-footer" style="margin-top:12px;">
+      <button class="btn btn-sm" id="modal-move-acc-cancel">取消</button>
+      <button class="btn btn-primary" id="modal-move-acc-ok" style="padding:5px 14px;">确认</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── 确认删除公众号 Modal ── -->
+<div class="modal-overlay" id="modal-del-acc">
+  <div class="modal" style="width:280px;">
+    <h3 style="color:#e5484d;">删除公众号</h3>
+    <p id="modal-del-acc-desc" style="font-size:12px;color:#6e6e73;margin-bottom:14px;line-height:1.6;"></p>
+    <div class="modal-footer">
+      <button class="btn btn-sm" id="modal-del-acc-cancel">取消</button>
+      <button class="btn" id="modal-del-acc-ok" style="background:#e5484d;color:#fff;padding:5px 14px;">确认删除</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── 确认删除分类 Modal ── -->
+<div class="modal-overlay" id="modal-del-cat">
+  <div class="modal">
+    <h3 id="modal-del-cat-title">删除分类</h3>
+    <p id="modal-del-cat-desc" style="font-size:12px;color:#6e6e73;margin-bottom:14px;line-height:1.6;"></p>
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:14px;cursor:pointer;">
+      <input type="checkbox" id="del-cat-with-accs" style="accent-color:#e5484d;width:14px;height:14px;">
+      同时删除该分类下的所有公众号
+    </label>
+    <div class="modal-footer">
+      <button class="btn btn-sm" id="modal-del-cat-cancel">取消</button>
+      <button class="btn" id="modal-del-cat-ok" style="background:#e5484d;color:#fff;padding:5px 14px;">确认删除</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── 确认清除所有数据 Modal ── -->
+<div class="modal-overlay" id="modal-clear-all">
+  <div class="modal">
+    <h3 style="color:#e5484d;">⚠️ 清除所有数据</h3>
+    <p style="font-size:12px;color:#6e6e73;margin:10px 0 16px;line-height:1.6;">
+      此操作将清除所有已保存的：<br>
+      · 公众号列表<br>
+      · 分类配置<br>
+      · Token<br>
+      · 当前监测结果<br><br>
+      <strong>操作不可撤销，请确认！</strong>
+    </p>
+    <div class="modal-footer">
+      <button class="btn btn-sm" id="modal-clear-all-cancel">取消</button>
+      <button class="btn" id="modal-clear-all-ok" style="background:#e5484d;color:#fff;padding:5px 14px;">清除全部</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── 关于 ── -->
+<div class="modal-overlay about-modal" id="modal-about">
+  <div class="modal">
+    <div class="about-logo">📡</div>
+    <div class="about-name">公众号文章监测助手</div>
+    <div class="about-ver">v3.0</div>
+    <div class="about-info">
+      <span>作者：</span>子晓<br>
+      <span>公众号：</span>子晓AI量化<br>
+      <span>微信号：</span>shiyang170808
+    </div>
+    <div class="about-copyright">
+      ⚠️ 版权声明：仅供自用，严禁商业售卖。
+    </div>
+    <div class="modal-footer" style="justify-content:center;">
+      <button class="btn btn-primary" id="modal-about-close" style="padding:6px 24px;">知道了</button>
+    </div>
+  </div>
+</div>
+
+<script src="popup.js"></script>
+</body>
+</html>
