@@ -8,6 +8,11 @@ const MAX_PAGES = 5;
 const REQ_DELAY_MS = 600;
 const DEFAULT_CAT = '__uncategorized__';
 
+// ── 搜索接口节流：经验证 600ms 安全，更快会触发 200013 ──
+let _searchQueueTail = Promise.resolve();
+const SEARCH_MIN_GAP_MS = 600;
+let _rateLimitCount = 0;                // 本轮触发限流次数
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 工具函数
 // ─────────────────────────────────────────────────────────────────────────────
@@ -30,6 +35,86 @@ function showToast(msg, duration = 2200) {
   el.textContent = msg;
   el.classList.add('show');
   setTimeout(() => el.classList.remove('show'), duration);
+}
+
+function showCooldownHint(seconds) {
+  const el = document.getElementById('progress-text');
+  if (!el) return;
+  let remaining = seconds;
+  el.textContent = `限流冷却中… 还需 ${remaining}s`;
+  const timer = setInterval(() => {
+    remaining--;
+    if (remaining <= 0) { clearInterval(timer); return; }
+    el.textContent = `限流冷却中… 还需 ${remaining}s`;
+  }, 1000);
+}
+
+function noteSearchRateLimit() {
+  _rateLimitCount++;
+}
+
+// ── 日志系统 ──
+let _logStartTime = 0;
+let _logStartClock = '';
+const _logLines = [];
+const LOG_MAX_LINES = 2000;
+
+function _addLogLine(event, details) {
+  const t = _logStartTime ? ((Date.now() - _logStartTime) / 1000).toFixed(1) : '----';
+  const evt = String(event || '').padEnd(7);
+  const line = `${t.padStart(6)}s  ${evt}  ${details || ''}`;
+  _logLines.push(line);
+  if (_logLines.length > LOG_MAX_LINES) _logLines.splice(0, _logLines.length - LOG_MAX_LINES);
+  const el = document.getElementById('log-area');
+  if (el) { el.value = _logLines.join('\n'); el.scrollTop = el.scrollHeight; }
+}
+
+function logRunStart(accountCount) {
+  _logStartTime = Date.now();
+  const d = new Date(_logStartTime);
+  _logStartClock = `${d.getHours().toString().padStart(2, '0')}${d.getMinutes().toString().padStart(2, '0')}${d.getSeconds().toString().padStart(2, '0')}`;
+  _logLines.length = 0;
+  _addLogLine('RUN', `acc=${accountCount}  gap=${SEARCH_MIN_GAP_MS}ms`);
+}
+
+function logStart(acc) { _addLogLine('START', acc); }
+function logOk(acc) { _addLogLine('OK', acc); }
+function logFail(acc, ret, reason) { _addLogLine('FAIL', `${acc}  ret=${ret}  ${reason || ''}`); }
+function logCoolStart(sec) { _addLogLine('COOL', `${sec}s`); }
+function logCoolEnd() { _addLogLine('COOL', 'end'); }
+function logRetry(acc) { _addLogLine('RETRY', acc); }
+
+function logDone(accountCount, rlCount) {
+  const dur = _logStartTime ? ((Date.now() - _logStartTime) / 1000).toFixed(1) : '?';
+  _addLogLine('DONE', `acc=${accountCount}  RL=${rlCount}  gap=${SEARCH_MIN_GAP_MS}ms  duration=${dur}s`);
+}
+
+function copyLog() {
+  const text = _logLines.join('\n');
+  if (!text) { showToast('日志为空'); return; }
+  navigator.clipboard.writeText(text).then(() => showToast('日志已复制')).catch(() => showToast('复制失败'));
+}
+
+function downloadLog() {
+  const text = _logLines.join('\n');
+  if (!text) { showToast('日志为空'); return; }
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `monitor-log-${_logStartClock || 'unknown'}.txt`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('日志已下载');
+}
+
+function clearLog() {
+  _logLines.length = 0;
+  _logStartTime = 0;
+  const el = document.getElementById('log-area');
+  if (el) el.value = '';
 }
 
 function blobDownload(filename, content) {
@@ -625,14 +710,69 @@ function buildHeaders() {
 }
 
 async function searchFakeid(accountName) {
+  // 全局队列保证 search 请求间隔 ≥ SEARCH_MIN_GAP_MS
+  const myReq = _searchQueueTail.then(async () => {
+    await sleep(SEARCH_MIN_GAP_MS);
+    return searchWithRetry(accountName);
+  });
+  _searchQueueTail = myReq.catch(() => {});
+  return myReq;
+}
+
+async function searchWithRetry(accountName) {
+  logStart(accountName);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const result = await trySearchOnce(accountName);
+      logOk(accountName);
+      return result;
+    } catch (err) {
+      const isRateLimit = /搜索频率限制/.test(err.message);
+      if (!isRateLimit) {
+        logFail(accountName, '?', err.message);
+        throw err;
+      }
+      const m = err.message.match(/ret=(\d+)/);
+      const ret = m ? m[1] : '?';
+      logFail(accountName, ret, 'rate limit');
+      noteSearchRateLimit();
+      if (attempt === 2) throw err;
+      logCoolStart(60);
+      showCooldownHint(60);
+      await sleep(60 * 1000);
+      logCoolEnd();
+      logRetry(accountName);
+    }
+  }
+}
+
+async function trySearchOnce(accountName) {
   const token = document.getElementById('token').value.trim() || state.token;
   const url = `https://mp.weixin.qq.com/cgi-bin/searchbiz?action=search_biz&begin=0&count=5&query=${encodeURIComponent(accountName)}&token=${token}&lang=zh_CN&f=json&ajax=1`;
   const resp = await fetch(url, { headers: buildHeaders() });
   const data = await resp.json();
-  if (data.base_resp && data.base_resp.ret === 0 && data.list && data.list.length > 0) {
+
+  if (!data.base_resp) {
+    throw new Error(`搜索接口无响应: ${accountName}`);
+  }
+
+  if (data.base_resp.ret !== 0) {
+    const ret = data.base_resp.ret;
+    const msg = data.base_resp.err_msg || data.base_resp.errmsg || '';
+    if (ret === 200003 || ret === 200013 || /freq|limit|频繁/i.test(msg)) {
+      throw new Error(`搜索频率限制 (ret=${ret}): ${accountName}`);
+    }
+    if (ret === 200001 || /token|invalid/i.test(msg)) {
+      throw new Error(`Token 无效 (ret=${ret}): ${accountName}`);
+    }
+    throw new Error(`搜索失败 ret=${ret}${msg ? ' ' + msg : ''}: ${accountName}`);
+  }
+
+  if (data.list && data.list.length > 0) {
     const exact = data.list.find(b => b.nickname === accountName);
     return exact ? exact.fakeid : data.list[0].fakeid;
   }
+
   throw new Error(`未找到公众号: ${accountName}`);
 }
 
@@ -642,7 +782,38 @@ async function fetchArticlesPage(fakeid, page) {
   const url = `https://mp.weixin.qq.com/cgi-bin/appmsgpublish?sub=list&search_field=null&begin=${begin}&count=${PAGE_SIZE}&query=&fakeid=${encodeURIComponent(fakeid)}&type=101_1&free_publish_type=1&sub_action=list_ex&token=${token}&lang=zh_CN&f=json&ajax=1`;
   const resp = await fetch(url, { headers: buildHeaders() });
   const data = await resp.json();
+
+  if (!data.base_resp) {
+    throw new Error('文章接口无响应');
+  }
+  if (data.base_resp.ret !== 0) {
+    const ret = data.base_resp.ret;
+    const msg = data.base_resp.err_msg || data.base_resp.errmsg || '';
+    if (ret === 200003 || /freq|limit|频繁/i.test(msg)) {
+      throw new Error(`文章频率限制 (ret=${ret})`);
+    }
+    throw new Error(`文章拉取失败 ret=${ret}${msg ? ' ' + msg : ''}`);
+  }
+  if (!data.publish_page) {
+    throw new Error('文章接口返回数据为空');
+  }
   return JSON.parse(data.publish_page);
+}
+
+async function fetchArticlesPageWithRetry(fakeid, page, accountName) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await fetchArticlesPage(fakeid, page);
+    } catch (err) {
+      const isRateLimit = /文章频率限制/.test(err.message);
+      if (!isRateLimit || attempt === 2) throw err;
+      const m = err.message.match(/ret=(\d+)/);
+      const ret = m ? m[1] : '?';
+      _addLogLine('ART-RL', `${accountName}  page=${page}  ret=${ret}  → 30s 冷却后重试 (第 ${attempt + 1}/2 次)`);
+      await sleep(30 * 1000);
+      _addLogLine('ART', `${accountName}  page=${page}  重试中…`);
+    }
+  }
 }
 
 async function monitorAccount(accountName, cutoffTs) {
@@ -650,7 +821,16 @@ async function monitorAccount(accountName, cutoffTs) {
   const articles = [];
   let page = 1, exhausted = false;
   while (page <= MAX_PAGES && !exhausted) {
-    const publishPage = await fetchArticlesPage(fakeid, page);
+    let publishPage;
+    try {
+      publishPage = await fetchArticlesPageWithRetry(fakeid, page, accountName);
+    } catch (err) {
+      const m = err.message.match(/ret=(\d+)/);
+      const ret = m ? m[1] : '?';
+      const isRL = /文章频率限制/.test(err.message);
+      _addLogLine(isRL ? 'ART-RL' : 'ART-FAIL', `${accountName}  page=${page}  ret=${ret}  ${err.message}`);
+      throw err;
+    }
     const list = publishPage.publish_list || [];
     if (list.length === 0) break;
     for (const item of list) {
@@ -672,8 +852,9 @@ async function monitorAccount(accountName, cutoffTs) {
       } catch (e) { /* skip */ }
     }
     page++;
-    if (!exhausted && page <= MAX_PAGES) await sleep(400);
+    if (!exhausted && page <= MAX_PAGES) await sleep(200);
   }
+  _addLogLine('ART', `${accountName}  n=${articles.length}  pages=${page - 1}`);
   return articles;
 }
 
@@ -694,6 +875,8 @@ async function runMonitor() {
   const cutoffTs = Math.floor((Date.now() - state.selectedDays * 86400 * 1000) / 1000);
   state.selectedSet.clear();
   state.results = [];
+  _rateLimitCount = 0;
+  logRunStart(state.accounts.length);
 
   const runBtn = document.getElementById('run-btn');
   const progressWrap = document.getElementById('progress-wrap');
@@ -702,21 +885,39 @@ async function runMonitor() {
   runBtn.disabled = true;
   progressWrap.style.display = 'block';
 
-  for (let i = 0; i < state.accounts.length; i++) {
-    const acc = state.accounts[i];
-    progressBar.style.width = `${Math.round(i / state.accounts.length * 100)}%`;
-    progressText.textContent = `[${i + 1}/${state.accounts.length}] 正在获取：${acc.name}`;
+  const CONCURRENCY = 3;
+  let completed = 0;
+  const results = [];
+
+  async function processOne(acc) {
     try {
       const articles = await monitorAccount(acc.name, cutoffTs);
-      state.results.push({ account: acc.name, articles, error: null });
+      return { account: acc.name, articles, error: null };
     } catch (err) {
-      state.results.push({ account: acc.name, articles: [], error: err.message });
+      return { account: acc.name, articles: [], error: err.message };
     }
-    if (i < state.accounts.length - 1) await sleep(REQ_DELAY_MS);
   }
 
+  const tasks = state.accounts.map(acc => () => processOne(acc));
+  let idx = 0;
+
+  async function worker() {
+    while (idx < tasks.length) {
+      const i = idx++;
+      const r = await tasks[i]();
+      results[i] = r;
+      completed++;
+      progressBar.style.width = `${Math.round(completed / state.accounts.length * 100)}%`;
+      progressText.textContent = `[${completed}/${state.accounts.length}] 已完成 · 间隔 ${SEARCH_MIN_GAP_MS}ms · 限流 ${_rateLimitCount} 次`;
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, tasks.length) }, () => worker()));
+  state.results = results.filter(Boolean);
+
   progressBar.style.width = '100%';
-  progressText.textContent = `完成！共检查 ${state.accounts.length} 个公众号`;
+  progressText.textContent = `完成！共检查 ${state.accounts.length} 个公众号 · 触发限流 ${_rateLimitCount} 次`;
+  logDone(state.accounts.length, _rateLimitCount);
   setTimeout(() => { progressWrap.style.display = 'none'; }, 1500);
   runBtn.disabled = false;
 
@@ -825,16 +1026,28 @@ function refreshAccountModal() {
 }
 
 function addAccountFromModal() {
-  const name = document.getElementById('new-acc-name').value.trim();
-  if (!name) { showToast('请输入公众号名称'); return; }
-  if (state.accounts.find(a => a.name === name)) { showToast(`"${name}" 已存在`); return; }
+  const raw = document.getElementById('new-acc-name').value;
+  const names = raw.split('\n').map(s => s.trim()).filter(Boolean);
+  if (!names.length) { showToast('请输入公众号名称'); return; }
+
   const catId = document.getElementById('new-acc-cat').value || DEFAULT_CAT;
-  state.accounts.push({ name, catId });
+  const existing = new Set(state.accounts.map(a => a.name));
+  let added = 0;
+
+  for (const name of names) {
+    if (existing.has(name)) continue;
+    state.accounts.push({ name, catId });
+    existing.add(name);
+    added++;
+  }
+
+  if (added === 0) { showToast('所有公众号已存在'); return; }
+
   saveStorage();
   renderSidebar();
   document.getElementById('new-acc-name').value = '';
   refreshAccountModal();
-  showToast(`已添加：${name}`);
+  showToast(`成功添加 ${added} 个公众号`);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -892,8 +1105,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('modal-accounts-close').addEventListener('click', closeAccountModal);
   document.getElementById('add-acc-confirm').addEventListener('click', addAccountFromModal);
   document.getElementById('new-acc-name').addEventListener('keydown', e => {
-    if (e.key === 'Enter') addAccountFromModal();
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) addAccountFromModal();
   });
+
+  // ── 日志面板 ──
+  document.getElementById('log-toggle-btn').addEventListener('click', () => {
+    document.getElementById('log-panel').classList.toggle('open');
+  });
+  document.getElementById('log-close-btn').addEventListener('click', () => {
+    document.getElementById('log-panel').classList.remove('open');
+  });
+  document.getElementById('log-copy-btn').addEventListener('click', copyLog);
+  document.getElementById('log-download-btn').addEventListener('click', downloadLog);
+  document.getElementById('log-clear-btn').addEventListener('click', clearLog);
 
   // ── 右键菜单 ──
   document.getElementById('ctx-rename').addEventListener('click', () => {

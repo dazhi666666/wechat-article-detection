@@ -6,15 +6,13 @@
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    width: 780px;
-    height: 540px;
     font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
     font-size: 13px;
     color: #1d1d1f;
     background: #f0f0f5;
+    min-height: 100vh;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
   }
 
   /* ── Header ── */
@@ -419,6 +417,69 @@
   .about-info { text-align: left; font-size: 12px; line-height: 1.8; color: #3c3c43; margin-bottom: 14px; }
   .about-info span { color: #86868b; }
   .about-copyright { font-size: 11px; color: #e5484d; background: #fff5f5; border-radius: 6px; padding: 8px 10px; line-height: 1.6; margin-bottom: 14px; }
+
+  /* ── 响应式自适应 ── */
+  @media (max-width: 768px) {
+    .main-body { flex-direction: column; }
+    .sidebar {
+      width: 100%;
+      max-height: 220px;
+      border-right: none;
+      border-bottom: 1px solid #e0e0e5;
+    }
+    .config-bar { flex-wrap: wrap; }
+    .config-bar input[type="text"] { width: 140px; }
+  }
+
+  /* ── 日志面板 ── */
+  #log-panel {
+    display: none;
+    flex-direction: column;
+    border-top: 1px solid #e0e0e5;
+    background: #fafafa;
+    height: 240px;
+    flex-shrink: 0;
+  }
+  #log-panel.open { display: flex; }
+  #log-toolbar {
+    display: flex;
+    align-items: center;
+    padding: 4px 8px;
+    border-bottom: 1px solid #f0f0f0;
+    gap: 4px;
+    font-size: 11px;
+    color: #6e6e73;
+    flex-shrink: 0;
+  }
+  #log-toolbar .title { flex: 1; font-weight: 600; }
+  #log-toolbar button {
+    background: #fff;
+    border: 1px solid #d2d2d7;
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 11px;
+    cursor: pointer;
+    font-family: inherit;
+    color: #3c3c43;
+  }
+  #log-toolbar button:hover { background: #f5f5f7; }
+  #log-area {
+    flex: 1;
+    border: none;
+    resize: none;
+    outline: none;
+    padding: 6px 10px;
+    font-family: 'SF Mono', 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: 11px;
+    line-height: 1.5;
+    background: #fafafa;
+    color: #1d1d1f;
+    white-space: pre;
+    overflow: auto;
+  }
+  @media (max-width: 768px) {
+    #log-panel { height: 160px; }
+  }
 </style>
 </head>
 <body>
@@ -485,6 +546,7 @@
       <span class="right-title" id="right-title">全部文章</span>
       <span class="right-meta" id="right-meta"></span>
       <button class="btn btn-ghost" id="manage-accounts-btn" style="margin-left:8px;">⚙ 管理公众号</button>
+      <button class="btn btn-ghost" id="log-toggle-btn" style="margin-left:4px;">📋 日志</button>
     </div>
 
     <!-- 操作栏 -->
@@ -505,6 +567,18 @@
         <div>点击左侧公众号查看文章</div>
         <div class="hint">先点击「开始监测」获取最新文章</div>
       </div>
+    </div>
+
+    <!-- 日志面板 -->
+    <div id="log-panel">
+      <div id="log-toolbar">
+        <span class="title">运行日志</span>
+        <button id="log-copy-btn">复制</button>
+        <button id="log-download-btn">下载</button>
+        <button id="log-clear-btn">清空</button>
+        <button id="log-close-btn">关闭</button>
+      </div>
+      <textarea id="log-area" readonly placeholder="点击「开始监测」后显示运行日志…"></textarea>
     </div>
   </div>
 </div>
@@ -529,8 +603,8 @@
 <div class="modal-overlay" id="modal-accounts">
   <div class="modal" style="width:300px;">
     <h3>添加公众号</h3>
-    <label class="field-label">公众号名称</label>
-    <input type="text" id="new-acc-name" placeholder="输入公众号名称">
+    <label class="field-label">公众号名称（每行一个）</label>
+    <textarea id="new-acc-name" placeholder="每行输入一个公众号名称" rows="5" style="resize:vertical;width:100%;box-sizing:border-box;"></textarea>
     <label class="field-label">所属分类</label>
     <select id="new-acc-cat"></select>
     <button class="btn btn-primary" id="add-acc-confirm" style="width:100%;margin-top:6px;">添加</button>
