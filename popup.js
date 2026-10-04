@@ -7,6 +7,7 @@ const PAGE_SIZE = 10;
 const MAX_PAGES = 5;
 const REQ_DELAY_MS = 600;
 const DEFAULT_CAT = '__uncategorized__';
+const DOWNLOAD_ROOT_DIR = '公众号文章下载';
 
 // ── 搜索接口节流：经验证 600ms 安全，更快会触发 200013 ──
 let _searchQueueTail = Promise.resolve();
@@ -120,6 +121,20 @@ function clearLog() {
 function blobDownload(filename, content) {
   const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
   const url = URL.createObjectURL(blob);
+  if (chrome.downloads && chrome.downloads.download) {
+    chrome.downloads.download({
+      url,
+      filename,
+      conflictAction: 'uniquify',
+      saveAs: false
+    }, () => {
+      URL.revokeObjectURL(url);
+      if (chrome.runtime.lastError) {
+        console.warn('Download failed:', chrome.runtime.lastError.message);
+      }
+    });
+    return;
+  }
   const a = document.createElement('a');
   a.href = url; a.download = filename;
   document.body.appendChild(a); a.click();
@@ -127,7 +142,23 @@ function blobDownload(filename, content) {
   URL.revokeObjectURL(url);
 }
 
-function safeName(s) { return s.replace(/[\\/:*?"<>|]/g, '').slice(0, 60); }
+function safePathPart(s, fallback = 'untitled', maxLen = 60) {
+  let name = String(s || '')
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLen)
+    .replace(/[. ]+$/g, '')
+    .trim();
+  if (!name || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(name)) name = fallback;
+  return name;
+}
+
+function safeName(s) { return safePathPart(s); }
+
+function articleDownloadPath(article, account) {
+  return `${safePathPart(DOWNLOAD_ROOT_DIR, 'wechat-articles')}/${safePathPart(account, 'unknown-account')}/${safePathPart(article.title, 'untitled', 100)}.md`;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // State
@@ -578,13 +609,13 @@ async function downloadArticle(article, account, btn) {
     const md = await contentPromise;
 
     // 6. 保存 MD 文件
-    blobDownload(`${safeName(account)}_${safeName(article.title)}.md`, md);
+    blobDownload(articleDownloadPath(article, account), md);
     btn.textContent = '✅';
     showToast(`已保存正文：${article.title.slice(0, 30)}`);
 
   } catch (e) {
     // 降级：保存链接版
-    blobDownload(`${safeName(account)}_${safeName(article.title)}.md`, buildMD(article, account));
+    blobDownload(articleDownloadPath(article, account), buildMD(article, account));
     btn.textContent = '✅链接';
     showToast(`正文提取失败，已保存链接：${e.message}`);
   }
@@ -638,12 +669,12 @@ async function downloadSelected() {
       }
 
       const md = await contentPromise;
-      blobDownload(`${safeName(account)}_${safeName(article.title)}.md`, md);
+      blobDownload(articleDownloadPath(article, account), md);
       ok++;
 
     } catch (e) {
       // 降级：保存链接版
-      blobDownload(`${safeName(account)}_${safeName(article.title)}.md`, buildMD(article, account));
+      blobDownload(articleDownloadPath(article, account), buildMD(article, account));
       fallback++;
     }
 
