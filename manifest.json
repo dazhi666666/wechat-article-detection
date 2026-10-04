@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "公众号文章监测助手",
-  "version": "3.0",
-  "description": "监测多个公众号的近期文章，支持自定义分类、左右布局、批量下载",
+  "version": "3.2",
+  "description": "监测多个公众号的近期文章，支持自定义分类、批量下载、导出Excel",
   "permissions": [
     "cookies",
     "storage",

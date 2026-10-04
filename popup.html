@@ -488,7 +488,7 @@
 <div class="header">
   <span>📡</span>
   <h1>公众号文章监测助手</h1>
-  <span class="badge">v3.0</span>
+  <span class="badge">v3.2</span>
   <div class="header-right">
     <span id="cookie-status">
       <span class="dot" id="cookie-dot"></span>
@@ -512,6 +512,7 @@
   </div>
   <button class="btn btn-primary" id="run-btn">▶ 开始监测</button>
   <button class="btn btn-sm" id="export-md-btn">导出 MD</button>
+  <button class="btn btn-sm" id="export-excel-btn">📊 导出Excel</button>
 </div>
 
 <!-- Progress -->
@@ -610,8 +611,14 @@
     <button class="btn btn-primary" id="add-acc-confirm" style="width:100%;margin-top:6px;">添加</button>
     <p style="font-size:10px;color:#86868b;margin-top:8px;text-align:center;">💡 右键左侧公众号可删除或移动分类</p>
     <div class="modal-footer" style="margin-top:8px;justify-content:space-between;">
-      <button class="btn" id="clear-all-data-btn" style="background:#fff;border:1px solid #e5484d;color:#e5484d;padding:4px 10px;font-size:11px;">🗑 清除所有数据</button>
-      <button class="btn btn-sm" id="modal-accounts-close">关闭</button>
+      <div style="display:flex;gap:4px;">
+        <button class="btn btn-sm" id="export-config-btn" title="导出配置，防止重装丢失" style="background:#f0f0f5;padding:4px 8px;font-size:11px;">📤 导出配置</button>
+        <button class="btn btn-sm" id="import-config-btn" title="从 JSON 文件恢复配置" style="background:#f0f0f5;padding:4px 8px;font-size:11px;">📥 导入配置</button>
+      </div>
+      <div style="display:flex;gap:4px;">
+        <button class="btn" id="clear-all-data-btn" style="background:#fff;border:1px solid #e5484d;color:#e5484d;padding:4px 10px;font-size:11px;">🗑 清除数据</button>
+        <button class="btn btn-sm" id="modal-accounts-close">关闭</button>
+      </div>
     </div>
   </div>
 </div>
@@ -696,7 +703,7 @@
   <div class="modal">
     <div class="about-logo">📡</div>
     <div class="about-name">公众号文章监测助手</div>
-    <div class="about-ver">v3.0</div>
+    <div class="about-ver">v3.2</div>
     <div class="about-info">
       <span>作者：</span>子晓<br>
       <span>公众号：</span>子晓AI量化<br>

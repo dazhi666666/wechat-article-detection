@@ -187,12 +187,17 @@ function saveStorage() {
     categories: state.categories,
     accounts: state.accounts,
     token: state.token,
+    // 持久化监测结果和UI状态，防止popup关闭丢失
+    results: state.results,
+    activeNav: state.activeNav,
+    selectedDays: state.selectedDays,
+    selectedKeys: Array.from(state.selectedSet),
   });
 }
 
 async function loadStorage() {
   return new Promise(resolve =>
-    chrome.storage.local.get(['categories', 'accounts', 'token'], resolve)
+    chrome.storage.local.get(['categories', 'accounts', 'token', 'results', 'activeNav', 'selectedDays', 'selectedKeys'], resolve)
   );
 }
 
@@ -254,7 +259,7 @@ function renderSidebar() {
   catListEl.innerHTML = '';
 
   // 按分类分组
-  const catMap = {}; // catId -> accounts[]
+  const catMap = {};
   for (const acc of state.accounts) {
     const cid = acc.catId || DEFAULT_CAT;
     if (!catMap[cid]) catMap[cid] = [];
@@ -263,7 +268,6 @@ function renderSidebar() {
 
   // 先渲染已命名分类，再渲染未分类
   const orderedCats = [...state.categories];
-  // 如果有未分类账号，末尾加虚拟分类
   if (catMap[DEFAULT_CAT] && catMap[DEFAULT_CAT].length > 0) {
     orderedCats.push({ id: DEFAULT_CAT, name: '未分类' });
   }
@@ -341,7 +345,6 @@ function renderSidebar() {
     catListEl.appendChild(block);
   }
 
-  // 如果没有任何分类也没有未分类，显示引导
   if (orderedCats.length === 0) {
     catListEl.innerHTML = '<div style="padding:12px 10px;font-size:11px;color:#c7c7cc;text-align:center;">点击 ＋ 新建分类<br>然后在「管理公众号」中添加</div>';
   }
@@ -376,7 +379,6 @@ function renderArticlePanel() {
     return;
   }
 
-  // 决定要渲染哪些结果
   let targets;
   if (state.activeNav === 'all') {
     targets = state.results;
@@ -395,7 +397,7 @@ function renderArticlePanel() {
     return;
   }
 
-  const showAccTag = state.activeNav === 'all'; // 全部模式下显示来源标签
+  const showAccTag = state.activeNav === 'all';
 
   let globalIdx = 0;
   for (const { account, articles, error } of targets) {
@@ -408,7 +410,6 @@ function renderArticlePanel() {
     }
     if (!articles || articles.length === 0) continue;
 
-    // 全部模式下显示账号分组标题
     if (showAccTag) {
       const groupTitle = document.createElement('div');
       groupTitle.className = 'acc-group-title';
@@ -455,11 +456,16 @@ function renderArticlePanel() {
         if (r) downloadArticle(r.articles[idx], acc, e.currentTarget);
       });
 
-      // 链接点击：用 chrome.tabs.create 新开标签页，弹窗不关闭
+      // 链接点击：先保存状态，再打开标签页
       item.querySelector('.art-title').addEventListener('click', e => {
         e.preventDefault();
         const url = e.currentTarget.dataset.url;
-        if (url && url !== '#') chrome.tabs.create({ url });
+        if (url && url !== '#') {
+          saveStorage();
+          const background = e.ctrlKey || e.metaKey;
+          chrome.tabs.create({ url, active: !background });
+          showToast(background ? '已在后台打开新标签页' : '已在新标签页打开，可随时切换');
+        }
       });
 
       panel.appendChild(item);
@@ -489,7 +495,6 @@ function updateActionBar() {
 // 勾选逻辑
 // ─────────────────────────────────────────────────────────────────────────────
 function toggleSelectAll() {
-  // 全选当前面板中所有可见文章
   let targets;
   if (state.activeNav === 'all') {
     targets = state.results;
@@ -507,7 +512,6 @@ function toggleSelectAll() {
   } else {
     allKeys.forEach(k => state.selectedSet.add(k));
   }
-  // 同步 checkbox
   allKeys.forEach(key => {
     const cb = document.querySelector(`input[data-key="${key}"]`);
     if (cb) cb.checked = state.selectedSet.has(key);
@@ -571,27 +575,20 @@ async function downloadArticle(article, account, btn) {
 
   let tab = null;
   try {
-    // 1. 创建新标签页打开文章（后台打开，不聚焦）
     tab = await chrome.tabs.create({ url: article.link, active: false });
 
-    // 2. 生成唯一请求 ID
     const requestId = 'req_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
 
-    // 3. 先监听返回消息
     const contentPromise = fetchArticleContent(tab.id, requestId, 25000);
 
-    // 4. 等待 content script 注入完成后再发送提取指令
-    //    content_scripts run_at document_idle，通常需要 2-4 秒
     await sleep(2500);
     try {
       await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_ARTICLE', requestId });
     } catch (e) {
-      // content script 可能还没准备好，多等一会重试
       await sleep(3000);
       try {
         await chrome.tabs.sendMessage(tab.id, { type: 'EXTRACT_ARTICLE', requestId });
       } catch (e2) {
-        // 如果还是失败，尝试用 scripting API 手动注入
         try {
           await chrome.scripting.executeScript({
             target: { tabId: tab.id },
@@ -605,7 +602,6 @@ async function downloadArticle(article, account, btn) {
       }
     }
 
-    // 5. 等待 content script 返回正文
     const md = await contentPromise;
 
     // 6. 保存 MD 文件
@@ -620,7 +616,6 @@ async function downloadArticle(article, account, btn) {
     showToast(`正文提取失败，已保存链接：${e.message}`);
   }
 
-  // 关闭打开的标签页
   if (tab && tab.id) {
     try { await chrome.tabs.remove(tab.id); } catch (e) { /* 忽略 */ }
   }
@@ -643,7 +638,6 @@ async function downloadSelected() {
 
     let tab = null;
     try {
-      // 打开标签页
       tab = await chrome.tabs.create({ url: article.link, active: false });
       const requestId = 'req_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
 
@@ -678,12 +672,10 @@ async function downloadSelected() {
       fallback++;
     }
 
-    // 关闭标签页
     if (tab && tab.id) {
       try { await chrome.tabs.remove(tab.id); } catch (e) { /* 忽略 */ }
     }
 
-    // 间隔一下避免太频繁
     if (i < selected.length - 1) await sleep(500);
   }
 
@@ -694,6 +686,121 @@ async function downloadSelected() {
   } else {
     showToast(`完成！成功下载 ${ok} 篇正文`);
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 导出 Excel（CSV 格式，UTF-8 BOM，Excel 可直接打开）
+// ─────────────────────────────────────────────────────────────────────────────
+function exportExcel() {
+  if (state.results.length === 0) {
+    showToast('暂无数据可导出');
+    return;
+  }
+
+  const BOM = '\uFEFF';
+  const headers = ['公众号名称', '文章标题', '链接', '发布日期'];
+  const rows = [headers];
+
+  let count = 0;
+  for (const { account, articles, error } of state.results) {
+    if (error || !articles) continue;
+    for (const a of articles) {
+      rows.push([
+        account || '',
+        (a.title || '').replace(/[\r\n]/g, ' '),
+        a.link || '',
+        a.date || '',
+      ]);
+      count++;
+    }
+  }
+
+  if (count === 0) {
+    showToast('暂无文章数据可导出');
+    return;
+  }
+
+  const csv = BOM + rows.map(r =>
+    r.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')
+  ).join('\n');
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const dateStr = new Date().toISOString().slice(0, 10);
+  a.href = url;
+  a.download = `公众号文章数据_${dateStr}.csv`;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast(`已导出 ${count} 篇文章数据（CSV）`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 数据导出 / 导入（防止重装丢失）
+// ─────────────────────────────────────────────────────────────────────────────
+function exportConfig() {
+  const data = {
+    version: '3.1',
+    exportTime: new Date().toISOString(),
+    categories: state.categories,
+    accounts: state.accounts,
+    token: state.token,
+  };
+  const json = JSON.stringify(data, null, 2);
+  const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const dateStr = new Date().toISOString().slice(0, 10);
+  a.href = url;
+  a.download = `公众号监测助手_配置备份_${dateStr}.json`;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('配置已导出，妥善保存以备重装恢复');
+}
+
+function importConfig() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.json';
+  input.onchange = async e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      if (!data.categories || !data.accounts) throw new Error('文件格式不正确');
+      const existCats = new Set(state.categories.map(c => c.id));
+      const existAccs = new Set(state.accounts.map(a => a.name));
+      let addedCats = 0, addedAccs = 0;
+      for (const cat of (data.categories || [])) {
+        if (!existCats.has(cat.id)) {
+          state.categories.push(cat);
+          addedCats++;
+        }
+      }
+      for (const acc of (data.accounts || [])) {
+        if (!existAccs.has(acc.name)) {
+          state.accounts.push(acc);
+          addedAccs++;
+        }
+      }
+      if (data.token && !state.token) {
+        state.token = data.token;
+        document.getElementById('token').value = data.token;
+      }
+      saveStorage();
+      renderSidebar();
+      renderArticlePanel();
+      showToast(`导入成功：新增 ${addedCats} 个分类、${addedAccs} 个公众号`);
+    } catch (err) {
+      showToast('导入失败：' + err.message);
+    }
+  };
+  document.body.appendChild(input);
+  input.click();
+  document.body.removeChild(input);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -720,7 +827,7 @@ function exportMarkdown() {
         md += '\n';
       });
     }
-    md += `---\n\n`;
+    md += '---\n\n';
   }
   blobDownload(`公众号监测报告_${dateStr.replace(/[: ]/g, '-')}.md`, md);
   showToast('已导出 Markdown 报告');
@@ -952,6 +1059,8 @@ async function runMonitor() {
   setTimeout(() => { progressWrap.style.display = 'none'; }, 1500);
   runBtn.disabled = false;
 
+  saveStorage();
+
   renderSidebar();
   renderArticlePanel();
 }
@@ -959,7 +1068,7 @@ async function runMonitor() {
 // ─────────────────────────────────────────────────────────────────────────────
 // 分类管理
 // ─────────────────────────────────────────────────────────────────────────────
-let _catModalMode = 'create'; // 'create' | 'rename'
+let _catModalMode = 'create';
 let _ctxCatId = null;
 
 function openCatModal(mode, catId) {
@@ -1008,7 +1117,7 @@ let _ctxMenuCatId = null;
 
 function showCtxMenu(e, catId) {
   _ctxMenuCatId = catId;
-  hideAccCtxMenu(); // 关闭另一个菜单
+  hideAccCtxMenu();
   const menu = document.getElementById('ctx-menu');
   menu.classList.add('open');
   menu.style.left = e.clientX + 'px';
@@ -1026,7 +1135,7 @@ let _ctxAccName = null;
 
 function showAccCtxMenu(e, accName) {
   _ctxAccName = accName;
-  hideCtxMenu(); // 关闭另一个菜单
+  hideCtxMenu();
   const menu = document.getElementById('ctx-acc-menu');
   menu.classList.add('open');
   menu.style.left = e.clientX + 'px';
@@ -1050,7 +1159,6 @@ function closeAccountModal() {
 }
 
 function refreshAccountModal() {
-  // 只刷新分类下拉
   const sel = document.getElementById('new-acc-cat');
   sel.innerHTML = state.categories.map(c => `<option value="${c.id}">${c.name}</option>`).join('') +
     `<option value="${DEFAULT_CAT}">未分类</option>`;
@@ -1085,11 +1193,24 @@ function addAccountFromModal() {
 // 初始化
 // ─────────────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
-  // 加载存储
+  // 加载存储（包含监测结果和UI状态）
   const saved = await loadStorage();
   if (saved.categories && Array.isArray(saved.categories)) state.categories = saved.categories;
   if (saved.accounts && Array.isArray(saved.accounts)) state.accounts = saved.accounts;
   if (saved.token) { state.token = saved.token; document.getElementById('token').value = saved.token; }
+  if (saved.results && Array.isArray(saved.results) && saved.results.length > 0) {
+    state.results = saved.results;
+  }
+  if (saved.activeNav) state.activeNav = saved.activeNav;
+  if (saved.selectedDays) {
+    state.selectedDays = saved.selectedDays;
+    document.querySelectorAll('#time-seg button').forEach(b => {
+      b.classList.toggle('active', parseInt(b.dataset.days) === saved.selectedDays);
+    });
+  }
+  if (saved.selectedKeys && Array.isArray(saved.selectedKeys)) {
+    state.selectedSet = new Set(saved.selectedKeys);
+  }
 
   await initCredentials();
 
@@ -1110,6 +1231,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // ── 导出 MD ──
   document.getElementById('export-md-btn').addEventListener('click', exportMarkdown);
+
+  // ── 导出 Excel ──
+  document.getElementById('export-excel-btn').addEventListener('click', exportExcel);
 
   // ── Token 变更 ──
   document.getElementById('token').addEventListener('change', e => {
@@ -1150,7 +1274,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('log-download-btn').addEventListener('click', downloadLog);
   document.getElementById('log-clear-btn').addEventListener('click', clearLog);
 
-  // ── 右键菜单 ──
+  // ── 右键菜单（分类）──
   document.getElementById('ctx-rename').addEventListener('click', () => {
     hideCtxMenu();
     openCatModal('rename', _ctxMenuCatId);
@@ -1158,7 +1282,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('ctx-add-acc').addEventListener('click', () => {
     hideCtxMenu();
     openAccountModal();
-    // 预选该分类
     setTimeout(() => {
       const sel = document.getElementById('new-acc-cat');
       if (sel) sel.value = _ctxMenuCatId;
@@ -1169,7 +1292,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     const cat = state.categories.find(c => c.id === _ctxMenuCatId);
     if (!cat) return;
     const accCount = state.accounts.filter(a => a.catId === _ctxMenuCatId).length;
-    // 打开确认弹窗
     document.getElementById('modal-del-cat-title').textContent = `删除分类「${cat.name}」`;
     document.getElementById('modal-del-cat-desc').textContent =
       accCount > 0
@@ -1190,13 +1312,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!cat) { document.getElementById('modal-del-cat').classList.remove('open'); return; }
     const withAccs = document.getElementById('del-cat-with-accs').checked;
     if (withAccs) {
-      // 同时删除该分类下所有公众号及其监测结果
       const names = state.accounts.filter(a => a.catId === _ctxMenuCatId).map(a => a.name);
       state.accounts = state.accounts.filter(a => a.catId !== _ctxMenuCatId);
       state.results = state.results.filter(r => !names.includes(r.account));
       showToast(`分类「${cat.name}」及其 ${names.length} 个公众号已删除`);
     } else {
-      // 仅删除分类，公众号移至未分类
       state.accounts.forEach(a => { if (a.catId === _ctxMenuCatId) a.catId = DEFAULT_CAT; });
       showToast(`分类「${cat.name}」已删除，公众号已移至未分类`);
     }
@@ -1206,6 +1326,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     renderArticlePanel();
     document.getElementById('modal-del-cat').classList.remove('open');
   });
+
   // 点击外部关闭右键菜单和所有 modal
   document.addEventListener('click', e => {
     if (!e.target.closest('#ctx-menu') && !e.target.closest('.cat-menu-btn')) hideCtxMenu();
@@ -1286,14 +1407,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('modal-clear-all').classList.remove('open');
   });
   document.getElementById('modal-clear-all-ok').addEventListener('click', () => {
-    // 清空所有状态
     state.categories = [];
     state.accounts = [];
     state.token = '';
     state.results = [];
     state.selectedSet.clear();
     state.activeNav = 'all';
-    // 清空 storage
     chrome.storage.local.clear(() => {
       document.getElementById('token').value = '';
       document.getElementById('modal-clear-all').classList.remove('open');
@@ -1316,4 +1435,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('modal-about-close').addEventListener('click', () => {
     document.getElementById('modal-about').classList.remove('open');
   });
+
+  // ── 导出 / 导入配置 ──
+  document.getElementById('export-config-btn').addEventListener('click', exportConfig);
+  document.getElementById('import-config-btn').addEventListener('click', importConfig);
 });
